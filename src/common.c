@@ -49,6 +49,22 @@ int add_tap_to_bridge(char *ifname, char *br)
         close(fd);
         return -1;
     }
+
+    /* Bring tap interface up */
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+    if (ioctl(fd, SIOCGIFFLAGS, &ifr) < 0) {
+        dbg_printf("Can't get flags of %s.\n", ifname);
+        close(fd);
+        return -1;
+    }
+    ifr.ifr_flags |= IFF_UP;
+    if (ioctl(fd, SIOCSIFFLAGS, &ifr) < 0) {
+        dbg_printf("Can't get flags of %s.\n", ifname);
+        close(fd);
+        return -1;
+    }
+
     close(fd);
     return 0;
 }
