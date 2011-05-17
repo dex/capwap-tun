@@ -25,6 +25,14 @@
 
 extern int enable_debug;
 
+struct capwap_hdr {
+	u_int32_t pad1;
+	u_int32_t pad2;
+} __attribute__((packed)); /* optional variable list */;
+#define capwap_hdr_preamble(h)  ((ntohl((h)->pad1) >> 24) & 0xff)
+#define capwap_hdr_hlen(h)  ((ntohl((h)->pad1) >> 19) & 0x1f)
+#define capwap_hdr_wbid(h)  ((ntohl((h)->pad1) >> 9) & 0x1f)
+
 #define dbg_printf(format, args...) 				\
     do { 							\
 	if (enable_debug) { 					\

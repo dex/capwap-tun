@@ -20,15 +20,24 @@ static void tap_rx_cb(int fd, short type, void *arg)
     struct client_info *cli = tun->tun_priv;
     ssize_t len;
     char buffer[L2_MAX_SIZE];
+    const int capwap_hdrlen = sizeof(struct capwap_hdr);
+    const unsigned char capwap_hdr[] = { 
+	0x00, 0x10, 0x02, 0x00, 
+	0x00, 0x00, 0x00, 0x00
+    };
 
-    if ((len = read(fd, buffer, L2_MAX_SIZE)) < 0) {
+    /* Reserved space for CAPWAP header */
+    if ((len = read(fd, buffer+capwap_hdrlen, L2_MAX_SIZE-capwap_hdrlen)) < 0) {
 	dbg_printf("Can't read packet from TAP interface. (errno=%d)\n", len);
 	return;
     }
     dbg_printf("Received %d bytes from TAP (%s)\n", len, tun->tun_if);
 
+    /* Fill CAPWAP header */
+    memcpy(buffer, capwap_hdr, capwap_hdrlen);
+
     if (tun->tun_alive) {
-	if (sendto(cli->cli_fd, buffer, len, 0, 
+	if (sendto(cli->cli_fd, buffer, len+capwap_hdrlen, 0, 
 		    (struct sockaddr *)&tun->tun_addr,
 		    sizeof(struct sockaddr_in)) < 0) {
 	    dbg_printf("Can't send packet to AC.\n");
@@ -48,6 +57,7 @@ static void capwap_rx_cb(int fd, short type, void *arg)
     char buffer[L2_MAX_SIZE];
     struct sockaddr_in server;
     int addrlen = sizeof(server);
+    const int capwap_hdrlen = sizeof(struct capwap_hdr);
 
     if ((len = recvfrom(fd, buffer, L2_MAX_SIZE, 0,
 		    (struct sockaddr *)&server, &addrlen)) < 0) {
@@ -64,7 +74,9 @@ static void capwap_rx_cb(int fd, short type, void *arg)
                     inet_ntoa(server.sin_addr), 
                     ntohs(server.sin_port));
         }
-        if (write(tun->tun_fd, buffer, len) < len)
+        /* Skip CAPWAP header */
+        if (write(tun->tun_fd, buffer+capwap_hdrlen, len-capwap_hdrlen) < 
+                len-capwap_hdrlen)
             dbg_printf("Can't write packet into TAP (%s).\n", tun->tun_if);
         return;
     }
