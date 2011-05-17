@@ -14,7 +14,7 @@ int get_tap_interface(char *ifname)
 
     /* Create TAP interface */
     memset(&ifr, 0, sizeof(ifr));
-    ifr.ifr_flags = IFF_TAP;
+    ifr.ifr_flags = IFF_TAP|IFF_NO_PI;
     strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
     if (ioctl(fd, TUNSETIFF, (void *)&ifr) < 0) {
         dbg_printf("Can't set up TUN/TAP.\n");
