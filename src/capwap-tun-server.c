@@ -1,41 +1,15 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <event.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/ioctl.h>
-#include <netinet/in.h>
-#include <linux/if.h>
-#include <linux/if_tun.h>
-#include <linux/if_bridge.h>
-#include <linux/sockios.h>
-//#include "CWProtocol.h"
-
-#define CW_DATA_PORT    5247
-#define TUN_CTL_DEV     "/dev/net/tun"
+#include "common.h"
 
 int enable_debug = 0;
-#define dbg_printf(format, args...) 				\
-    do { 							\
-	if (enable_debug) { 					\
-	    fprintf(stderr, "<DEBUG:%s:%d> " format, 		\
-		    __FILE__, __LINE__, ##args); 		\
-	} 							\
-    } while(0)
 
-struct tun_info {
-    struct sockaddr_in tun_addr;
-    /* TODO IPv6 */
-    char tun_if[IFNAMSIZ];
-    char tun_br[IFNAMSIZ];
-    enum { TUN_DEAD = 0, TUN_ALIVE = 1 } tun_st;
-    int tun_fd;
-    struct event tun_ev;
-    int tun_alive;
+struct server_info {
+    int srv_fd;
+    struct sockaddr_in srv_addr;
+    struct event srv_ev;
+    struct {
+	int tun_cnt;
+	struct tun_info *tun_infos;
+    } srv_tun;
 };
 
 static void usage(void)
@@ -104,98 +78,80 @@ static int get_tun_info_from_config(const char *config,
     return count;
 
 fail:
-    fclose(fp);
+    if (fp)
+	fclose(fp);
     if (*tun_infos)
         free(*tun_infos);
     return -1;
 }
 
-static void tap_rx(int fd, short type, void *arg)
+static void tap_rx_cb(int fd, short type, void *arg)
 {
-}
+    struct tun_info *tun = arg;
+    struct server_info *srv = tun->tun_priv;
+    ssize_t len;
+    char buffer[L2_MAX_SIZE];
 
-static int get_tap_interface(char *ifname)
-{
-    int fd;
-    struct ifreq ifr;
-
-    /* Get file descriptor */
-    if ((fd = open(TUN_CTL_DEV, O_RDWR)) < 0) {
-        dbg_printf("Can't open " TUN_CTL_DEV "\n");
-        return -1;
+    if ((len = read(fd, buffer, L2_MAX_SIZE)) < 0) {
+	dbg_printf("Can't read packet from TAP interface. (errno=%d)\n", len);
+	return;
     }
+    dbg_printf("Received %d bytes from TAP (%s)\n", len, tun->tun_if);
 
-    /* Create TAP interface */
-    memset(&ifr, 0, sizeof(ifr));
-    ifr.ifr_flags = IFF_TAP;
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
-    if (ioctl(fd, TUNSETIFF, (void *)&ifr) < 0) {
-        dbg_printf("Can't set up TUN/TAP.\n");
-	return -1;
+    if (tun->tun_alive && tun->tun_addr.sin_port) {
+	if (sendto(srv->srv_fd, buffer, len, 0, 
+		    (struct sockaddr *)&tun->tun_addr,
+		    sizeof(struct sockaddr_in)) < 0) {
+	    dbg_printf("Can't send packet to WTP.\n");
+	    return;
+	}
+    } else {
+	dbg_printf("WTP is not existed.\n");
     }
-    strcpy(ifname, ifr.ifr_name);
-    return fd;
+    return;
 }
 
-static void revmoe_tap_interface(int fd)
+static void capwap_rx_cb(int fd, short type, void *arg)
 {
-    if (fd > 0)
-        close(fd);
-}
+    struct server_info *srv = arg;
+    int len, i, tun_cnt = srv->srv_tun.tun_cnt;
+    struct tun_info *infos = srv->srv_tun.tun_infos, *tun;
+    char buffer[L2_MAX_SIZE];
+    struct sockaddr_in client;
+    int addrlen = sizeof(client);
 
-static int add_tap_to_bridge(char *ifname, char *br)
-{
-    int fd;
-    struct ifreq ifr;
-
-    /* Add into bridge */
-    fd = socket(AF_INET, SOCK_STREAM, 0);
-    memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, br, IFNAMSIZ);
-    if ((ifr.ifr_ifindex = if_nametoindex(ifname)) == 0) {
-        dbg_printf("Can't get index of interface %s.\n", ifname);
-        close(fd);
-        return -1;
+    if ((len = recvfrom(fd, buffer, L2_MAX_SIZE, 0,
+		    (struct sockaddr *)&client, &addrlen)) < 0) {
+	dbg_printf("Can't recv packet from WTP.\n");
+	return;
     }
-    if (ioctl(fd, SIOCBRADDIF, &ifr) < 0) {
-        dbg_printf("Can't get add interface %s into bridge %s.\n", ifname, br);
-        close(fd);
-        return -1;
+    dbg_printf("Received %d bytes from WTP (%s).\n", len, 
+	    inet_ntoa(client.sin_addr));
+
+    for (i = 0; i < tun_cnt; i++) {
+	tun = &infos[i];
+	if (tun->tun_addr.sin_addr.s_addr == client.sin_addr.s_addr) {
+	    tun->tun_alive = 1;
+	    if (tun->tun_addr.sin_port == 0)
+		tun->tun_addr.sin_port = client.sin_port;
+	    if (tun->tun_addr.sin_port != client.sin_port) {
+		dbg_printf("The port of WTP (%s) is changed from %d to %d.\n",
+			inet_ntoa(client.sin_addr), 
+			ntohs(tun->tun_addr.sin_port),
+			ntohs(client.sin_port));
+		tun->tun_addr.sin_port = client.sin_port;
+	    }
+	    if (write(tun->tun_fd, buffer, len) < len)
+		dbg_printf("Can't write packet into TAP (%s).\n", tun->tun_if);
+	    return;
+	}
     }
-    close(fd);
-    return 0;
+    dbg_printf("Unknwon WTP (%s), ignored it.\n", 
+	    inet_ntoa(client.sin_addr));
+    return;
 }
 
-static void remove_from_bridge(char *ifname, char *br)
-{
-    int fd;
-    struct ifreq ifr;
-
-    /* Remove bridge member interface */
-    fd = socket(AF_INET, SOCK_STREAM, 0);
-    memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, br, IFNAMSIZ);
-    ifr.ifr_ifindex = if_nametoindex(ifname);
-    ioctl(fd, SIOCBRADDIF, &ifr);
-    close(fd);
-}
-
-static int add_to_event_loop(struct tun_info *info)
-{
-    /* Add into event loop */
-    event_set(&info->tun_ev, info->tun_fd, EV_READ|EV_PERSIST, tap_rx, info);
-    event_add(&info->tun_ev, NULL);
-}
-
-static void remove_from_event_loop(struct tun_info *info)
-{
-    /* Clean event */
-    if (event_initialized(&info->tun_ev) && 
-            event_pending(&info->tun_ev, EV_READ, NULL))
-        event_del(&info->tun_ev);
-}
-
-static int add_tap_interface(struct tun_info *infos, int tun_cnt)
+static int add_tap_interface(struct tun_info *infos, int tun_cnt, void *priv)
 {
     int i;
 
@@ -204,8 +160,9 @@ static int add_tap_interface(struct tun_info *infos, int tun_cnt)
         
         if (((info->tun_fd = get_tap_interface(info->tun_if)) < 0) || 
                 (add_tap_to_bridge(info->tun_if, info->tun_br) < 0) || 
-                (add_to_event_loop(info) < 0))
+                (add_to_event_loop(info, tap_rx_cb) < 0))
             goto fail;
+	info->tun_priv = priv;
     }
     return 0;
 
@@ -224,7 +181,11 @@ int main(int argc, char *argv[])
 {
     int opt, tun_cnt;
     const char *config;
+    struct server_info server_info, *srv_info;
     struct tun_info *tun_infos;
+
+    srv_info = &server_info;
+    memset(srv_info, 0, sizeof(struct server_info));
 
     while ((opt = getopt(argc, argv, "hdc:")) != -1) {
         switch (opt) {
@@ -232,7 +193,7 @@ int main(int argc, char *argv[])
                 config = optarg;
                 break;
             case 'd':
-                enable_debug = !!atoi(optarg);
+                enable_debug = 1;
                 break;
             case 'h':
             default:
@@ -248,13 +209,33 @@ int main(int argc, char *argv[])
         dbg_printf("Can't parse config file: %s.\n", config);
         return 1;
     }
+    srv_info->srv_tun.tun_cnt = tun_cnt;
+    srv_info->srv_tun.tun_infos = tun_infos;
 
     /* Added interfaces */
-    if (add_tap_interface(tun_infos, tun_cnt) < 0) {
+    if (add_tap_interface(tun_infos, tun_cnt, srv_info) < 0) {
         dbg_printf("Can't add TAP interfaces");
         free(tun_infos);
         return 1;
     }
+
+    /* CAPWAP Data Channel */
+    srv_info->srv_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (srv_info->srv_fd < 0) {
+	dbg_printf("Can't create UDP socket.\n");
+	return 1;
+    }
+    srv_info->srv_addr.sin_family = AF_INET;
+    srv_info->srv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    srv_info->srv_addr.sin_port = htons(CW_DATA_PORT);
+    if (bind(srv_info->srv_fd, (struct sockaddr *)&srv_info->srv_addr,
+		sizeof(struct sockaddr_in)) < 0) {
+	dbg_printf("Can't bind port %d.\n", CW_DATA_PORT);
+	return -1;
+    }
+    event_set(&srv_info->srv_ev, srv_info->srv_fd, EV_READ|EV_PERSIST,
+	    capwap_rx_cb, srv_info);
+    event_add(&srv_info->srv_ev, NULL);
 
     event_dispatch();
 
