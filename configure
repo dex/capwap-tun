@@ -1311,7 +1311,7 @@ Optional Features:
   --enable-FEATURE[=ARG]  include FEATURE [ARG=yes]
   --disable-dependency-tracking  speeds up one-time build
   --enable-dependency-tracking   do not reject slow dependency extractors
-  --enable-capwap-header  Add CAPWAP header
+  --disable-capwap-header Remove CAPWAP header
 
 Some influential environment variables:
   CC          C compiler command
@@ -4094,6 +4094,8 @@ fi
 # Check whether --enable-capwap-header was given.
 if test "${enable_capwap_header+set}" = set; then :
   enableval=$enable_capwap_header;
+else
+
 $as_echo "#define ENABLE_CAPWAP_HDR 1" >>confdefs.h
 
 fi

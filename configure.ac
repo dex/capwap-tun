@@ -26,9 +26,9 @@ if test "x${have_event}" = xno; then
 fi
 
 AC_ARG_ENABLE([capwap-header],
-	    [AS_HELP_STRING([--enable-capwap-header],
-			    [Add CAPWAP header])],
-	    [AC_DEFINE([ENABLE_CAPWAP_HDR], 1, [Enable CAPWAP header])],[])
+	    [AS_HELP_STRING([--disable-capwap-header],
+			    [Remove CAPWAP header])],
+	    [],[AC_DEFINE([ENABLE_CAPWAP_HDR], 1, [Enable CAPWAP header])])
 
 # Checks for typedefs, structures, and compiler characteristics.
 
