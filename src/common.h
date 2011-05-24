@@ -19,6 +19,10 @@
 #include <linux/if_bridge.h>
 #include <linux/sockios.h>
 
+#if HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #define CW_DATA_PORT    5247
 #define TUN_CTL_DEV     "/dev/net/tun"
 #define L2_MAX_SIZE	1536
@@ -32,6 +36,17 @@ struct capwap_hdr {
 #define capwap_hdr_preamble(h)  ((ntohl((h)->pad1) >> 24) & 0xff)
 #define capwap_hdr_hlen(h)  ((ntohl((h)->pad1) >> 19) & 0x1f)
 #define capwap_hdr_wbid(h)  ((ntohl((h)->pad1) >> 9) & 0x1f)
+
+static const unsigned char capwap_hdr[] = { 
+	0x00, 0x10, 0x02, 0x00, 
+	0x00, 0x00, 0x00, 0x00
+};
+
+#ifdef ENABLE_CAPWAP_HDR
+static const capwap_hdrlen = sizeof(struct capwap_hdr);
+#else
+static const capwap_hdrlen = 0;
+#endif
 
 #define dbg_printf(format, args...) 				\
     do { 							\

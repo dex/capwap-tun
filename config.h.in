@@ -1,5 +1,8 @@
 /* config.h.in.  Generated from configure.ac by autoheader.  */
 
+/* Enable CAPWAP header */
+#undef ENABLE_CAPWAP_HDR
+
 /* Define to 1 if you have the <event.h> header file. */
 #undef HAVE_EVENT_H
 

@@ -682,6 +682,7 @@ ac_subst_files=''
 ac_user_opts='
 enable_option_checking
 enable_dependency_tracking
+enable_capwap_header
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1310,6 +1311,7 @@ Optional Features:
   --enable-FEATURE[=ARG]  include FEATURE [ARG=yes]
   --disable-dependency-tracking  speeds up one-time build
   --enable-dependency-tracking   do not reject slow dependency extractors
+  --enable-capwap-header  Add CAPWAP header
 
 Some influential environment variables:
   CC          C compiler command
@@ -4088,6 +4090,14 @@ fi
 if test "x${have_event}" = xno; then
 	as_fn_error $? "No event support" "$LINENO" 5
 fi
+
+# Check whether --enable-capwap-header was given.
+if test "${enable_capwap_header+set}" = set; then :
+  enableval=$enable_capwap_header;
+$as_echo "#define ENABLE_CAPWAP_HDR 1" >>confdefs.h
+
+fi
+
 
 # Checks for typedefs, structures, and compiler characteristics.
 

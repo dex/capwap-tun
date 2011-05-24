@@ -25,6 +25,11 @@ if test "x${have_event}" = xno; then
 	AC_MSG_ERROR([No event support])
 fi
 
+AC_ARG_ENABLE([capwap-header],
+	    [AS_HELP_STRING([--enable-capwap-header],
+			    [Add CAPWAP header])],
+	    [AC_DEFINE([ENABLE_CAPWAP_HDR], 1, [Enable CAPWAP header])],[])
+
 # Checks for typedefs, structures, and compiler characteristics.
 
 # Checks for library functions.
