@@ -18,6 +18,7 @@
 #include <linux/if_tun.h>
 #include <linux/if_bridge.h>
 #include <linux/sockios.h>
+#include <netdb.h>
 
 #if HAVE_CONFIG_H
 #include <config.h>
@@ -57,8 +58,8 @@ static const capwap_hdrlen = 0;
     } while(0)
 
 struct tun_info {
-    struct sockaddr_in tun_addr;
-    /* TODO IPv6 */
+    struct sockaddr *tun_addr;
+    size_t tun_addrlen;
     char tun_if[IFNAMSIZ];
     char tun_br[IFNAMSIZ];
     enum { TUN_DEAD = 0, TUN_ALIVE = 1 } tun_st;

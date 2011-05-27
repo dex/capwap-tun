@@ -24,6 +24,35 @@ static void usage(void)
 		    "\tbr: Bridge name to which ifname belong.\n");
 }
 
+static int get_sockaddr(struct tun_info *tun, char *host, char *service)
+{
+    struct addrinfo hints;
+    struct addrinfo *result, *rp;
+    int ret;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_NUMERICHOST|AI_NUMERICSERV;
+    hints.ai_protocol = 0;
+
+    if ((ret = getaddrinfo(host, service, &hints, &result)) != 0) {
+	fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(ret));
+	return -1;
+    }
+
+    if (!result)
+	return -1;
+
+    tun->tun_addrlen = result->ai_addrlen;
+    tun->tun_addr = calloc(1, result->ai_addrlen);
+    if (!tun->tun_addr)
+	return -1;
+    memcpy(tun->tun_addr, result->ai_addr, result->ai_addrlen);
+    freeaddrinfo(result);
+    return 0;
+}
+
 static int get_tun_info_from_config(const char *config, 
         struct tun_info **tun_infos)
 {
@@ -32,6 +61,7 @@ static int get_tun_info_from_config(const char *config,
     int i = 0, count = 0;
     struct tun_info *infos;
     char *pos, *tok, delim[] = " \t\n";
+    char *host, *service;
 
     *tun_infos = NULL;
 
@@ -52,17 +82,18 @@ static int get_tun_info_from_config(const char *config,
     /* Second pass */
     rewind(fp);
     while (fgets(buf, BUFSIZ-1, fp) != NULL) {
+	host = NULL;
+	service = NULL;
         if (buf[0] == '#' || buf[0] == '\n')
             continue;
         /* wtp_ip */
         if ((tok = strtok_r(buf, delim, &pos)) == NULL)
             goto fail;
-        if ((infos[i].tun_addr.sin_addr.s_addr = inet_addr(tok)) == INADDR_NONE)
-            goto fail;
+	host = tok;
         /* wtp_udp_port */
         if ((tok = strtok_r(NULL, delim, &pos)) == NULL)
             goto fail;
-        infos[i].tun_addr.sin_port = (strcmp(tok,"ANY") ? htons(atoi(tok)) : 0);
+        service = (strcmp(tok,"ANY") ? tok : NULL);
         /* tun_if */
         if ((tok = strtok_r(NULL, delim, &pos)) == NULL)
             goto fail;
@@ -72,6 +103,8 @@ static int get_tun_info_from_config(const char *config,
             goto fail;
         strcpy(infos[i].tun_br, tok);
 
+	if (get_sockaddr(&infos[i], host, service) < 0)
+	    goto fail;
         i++;
     }
     fclose(fp);
@@ -80,6 +113,10 @@ static int get_tun_info_from_config(const char *config,
 fail:
     if (fp)
 	fclose(fp);
+    for (i = 0; i < count; i++) {
+	if (infos[i].tun_addr)
+	    free(infos[i].tun_addr);
+    }
     if (*tun_infos)
         free(*tun_infos);
     return -1;
@@ -102,10 +139,10 @@ static void tap_rx_cb(int fd, short type, void *arg)
     /* Fill CAPWAP header */
     memcpy(buffer, capwap_hdr, capwap_hdrlen);
 
-    if (tun->tun_alive && tun->tun_addr.sin_port) {
+    if (tun->tun_alive) {
 	if (sendto(srv->srv_fd, buffer, len+capwap_hdrlen, 0, 
-		    (struct sockaddr *)&tun->tun_addr,
-		    sizeof(struct sockaddr_in)) < 0) {
+		    (struct sockaddr *)tun->tun_addr,
+		    tun->tun_addrlen) < 0) {
 	    dbg_printf("Can't send packet to WTP.\n");
 	    return;
 	}
@@ -115,36 +152,62 @@ static void tap_rx_cb(int fd, short type, void *arg)
     return;
 }
 
+static inline char *get_sockaddr_host(struct sockaddr *addr, size_t addrlen, 
+	char *buf)
+{
+    int ret;
+    
+    ret = getnameinfo(addr, addrlen, buf, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+    if (ret) {
+	fprintf(stderr, "Can't get host from sockaddr.\n");
+	return NULL;
+    }
+    return buf;
+}
+
+static int sockaddr_host_equal(struct sockaddr *src_addr, size_t src_addrlen,
+	struct sockaddr *dst_addr, size_t dst_addrlen)
+{
+    char src_host[NI_MAXHOST], dst_host[NI_MAXHOST];
+    int ret;
+
+    if (src_addrlen != dst_addrlen)
+	return 0;
+
+    if (get_sockaddr_host(src_addr, src_addrlen, src_host) &&
+	    get_sockaddr_host(dst_addr, dst_addrlen, dst_host) &&
+	    strcmp(src_host, dst_host) == 0)
+	return 1;
+    return 0;
+}
+
 static void capwap_rx_cb(int fd, short type, void *arg)
 {
     struct server_info *srv = arg;
     int len, i, tun_cnt = srv->srv_tun.tun_cnt;
     struct tun_info *infos = srv->srv_tun.tun_infos, *tun;
     char buffer[L2_MAX_SIZE];
-    struct sockaddr_in client;
+    struct sockaddr_storage client;
     int addrlen = sizeof(client);
+    char host[NI_MAXHOST];
 
     if ((len = recvfrom(fd, buffer, L2_MAX_SIZE, 0,
 		    (struct sockaddr *)&client, &addrlen)) < 0) {
 	dbg_printf("Can't recv packet from WTP.\n");
 	return;
     }
-    dbg_printf("Received %d bytes from WTP (%s).\n", len, 
-	    inet_ntoa(client.sin_addr));
+
+    if (!get_sockaddr_host((struct sockaddr *)&client, addrlen, host))
+	return;
+    dbg_printf("Received %d bytes from WTP (%s).\n", len, host);
 
     for (i = 0; i < tun_cnt; i++) {
 	tun = &infos[i];
-	if (tun->tun_addr.sin_addr.s_addr == client.sin_addr.s_addr) {
+	if (sockaddr_host_equal(tun->tun_addr, tun->tun_addrlen, 
+		    (struct sockaddr *)&client, addrlen)) {
 	    tun->tun_alive = 1;
-	    if (tun->tun_addr.sin_port == 0)
-		tun->tun_addr.sin_port = client.sin_port;
-	    if (tun->tun_addr.sin_port != client.sin_port) {
-		dbg_printf("The port of WTP (%s) is changed from %d to %d.\n",
-			inet_ntoa(client.sin_addr), 
-			ntohs(tun->tun_addr.sin_port),
-			ntohs(client.sin_port));
-		tun->tun_addr.sin_port = client.sin_port;
-	    }
+	    if (memcmp(tun->tun_addr, &client, tun->tun_addrlen))
+		memcpy(tun->tun_addr, &client, tun->tun_addrlen);
 	    /* Skip CAPWAP header */
 	    if (write(tun->tun_fd, buffer+capwap_hdrlen, len-capwap_hdrlen) < 
 		    len-capwap_hdrlen)
@@ -152,8 +215,7 @@ static void capwap_rx_cb(int fd, short type, void *arg)
 	    return;
 	}
     }
-    dbg_printf("Unknwon WTP (%s), ignored it.\n", 
-	    inet_ntoa(client.sin_addr));
+    dbg_printf("Unknwon WTP (%s), ignored it.\n", host);
     return;
 }
 
