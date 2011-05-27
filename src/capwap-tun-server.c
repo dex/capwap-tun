@@ -24,35 +24,6 @@ static void usage(void)
 		    "\tbr: Bridge name to which ifname belong.\n");
 }
 
-static int get_sockaddr(struct tun_info *tun, char *host, char *service)
-{
-    struct addrinfo hints;
-    struct addrinfo *result, *rp;
-    int ret;
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_DGRAM;
-    hints.ai_flags = AI_NUMERICHOST|AI_NUMERICSERV;
-    hints.ai_protocol = 0;
-
-    if ((ret = getaddrinfo(host, service, &hints, &result)) != 0) {
-	fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(ret));
-	return -1;
-    }
-
-    if (!result)
-	return -1;
-
-    tun->tun_addrlen = result->ai_addrlen;
-    tun->tun_addr = calloc(1, result->ai_addrlen);
-    if (!tun->tun_addr)
-	return -1;
-    memcpy(tun->tun_addr, result->ai_addr, result->ai_addrlen);
-    freeaddrinfo(result);
-    return 0;
-}
-
 static int get_tun_info_from_config(const char *config, 
         struct tun_info **tun_infos)
 {
@@ -103,7 +74,7 @@ static int get_tun_info_from_config(const char *config,
             goto fail;
         strcpy(infos[i].tun_br, tok);
 
-	if (get_sockaddr(&infos[i], host, service) < 0)
+	if (get_sockaddr(&infos[i], host, service, NULL) < 0)
 	    goto fail;
         i++;
     }

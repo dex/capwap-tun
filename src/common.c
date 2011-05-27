@@ -110,6 +110,18 @@ char *get_sockaddr_host(struct sockaddr *addr, size_t addrlen, char *buf)
     return buf;
 }
 
+char *get_sockaddr_service(struct sockaddr *addr, size_t addrlen, char *buf)
+{
+    int ret;
+    
+    ret = getnameinfo(addr, addrlen, NULL, 0, buf, NI_MAXSERV, NI_NUMERICSERV);
+    if (ret) {
+	fprintf(stderr, "Can't get service from sockaddr.\n");
+	return NULL;
+    }
+    return buf;
+}
+
 int sockaddr_host_equal(struct sockaddr *src_addr, size_t src_addrlen,
 	struct sockaddr *dst_addr, size_t dst_addrlen)
 {
@@ -126,3 +138,64 @@ int sockaddr_host_equal(struct sockaddr *src_addr, size_t src_addrlen,
     return 0;
 }
 
+int sockaddr_service_equal(struct sockaddr *src_addr, size_t src_addrlen,
+	struct sockaddr *dst_addr, size_t dst_addrlen)
+{
+    char src_service[NI_MAXSERV], dst_service[NI_MAXSERV];
+    int ret;
+
+    if (src_addrlen != dst_addrlen)
+	return 0;
+
+    if (get_sockaddr_service(src_addr, src_addrlen, src_service) &&
+	    get_sockaddr_service(dst_addr, dst_addrlen, dst_service) &&
+	    strcmp(src_service, dst_service) == 0)
+	return 1;
+    return 0;
+}
+
+int get_sockaddr(struct tun_info *tun, char *host, char *service, int *fdp)
+{
+    struct addrinfo hints;
+    struct addrinfo *result, *rp;
+    int ret;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_NUMERICHOST|AI_NUMERICSERV;
+    hints.ai_protocol = 0;
+
+    if ((ret = getaddrinfo(host, service, &hints, &result)) != 0) {
+	fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(ret));
+	return -1;
+    }
+
+    if (!result)
+	return -1;
+    rp = result;
+
+    if (fdp) {
+	for (rp = result; rp; rp = rp->ai_next) {
+	    *fdp = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+	    if (*fdp == -1)
+		continue;
+	    if (connect(*fdp, rp->ai_addr, rp->ai_addrlen) != -1)
+		break; /* success */
+	    close(*fdp);
+	}
+	if (rp == NULL) {
+	    fprintf(stderr, "Could not connect\n");
+	    freeaddrinfo(result);
+	    return -1;
+	}
+    }
+
+    tun->tun_addrlen = rp->ai_addrlen;
+    tun->tun_addr = calloc(1, rp->ai_addrlen);
+    if (!tun->tun_addr)
+	return -1;
+    memcpy(tun->tun_addr, rp->ai_addr, rp->ai_addrlen);
+    freeaddrinfo(result);
+    return 0;
+}

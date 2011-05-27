@@ -80,7 +80,11 @@ extern void remove_from_bridge(char *ifname, char *br);
 extern int add_to_event_loop(struct tun_info *info, 
 	void (*cb)(int, short, void*));
 extern void remove_from_event_loop(struct tun_info *info);
+extern int get_sockaddr(struct tun_info *tun, char *host, char *service, 
+		int *fdp);
 extern char *get_sockaddr_host(struct sockaddr *addr, size_t addrlen, 
+		char *buf);
+extern char *get_sockaddr_service(struct sockaddr *addr, size_t addrlen, 
 		char *buf);
 extern int sockaddr_host_equal(struct sockaddr *src_addr, size_t src_addrlen,
 	struct sockaddr *dst_addr, size_t dst_addrlen);

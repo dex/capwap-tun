@@ -50,23 +50,29 @@ static void capwap_rx_cb(int fd, short type, void *arg)
     int len, i;
     struct tun_info *tun = &cli->cli_tun;
     char buffer[L2_MAX_SIZE];
-    struct sockaddr_in server;
+    struct sockaddr_storage server;
     int addrlen = sizeof(server);
+    char host[NI_MAXHOST];
+    char service[NI_MAXSERV];
 
     if ((len = recvfrom(fd, buffer, L2_MAX_SIZE, 0,
 		    (struct sockaddr *)&server, &addrlen)) < 0) {
 	dbg_printf("Can't recv packet from AC.\n");
 	return;
     }
-    dbg_printf("Received %d bytes from AC (%s).\n", len, 
-	    inet_ntoa(server.sin_addr));
 
-    if (tun->tun_addr.sin_addr.s_addr == server.sin_addr.s_addr) {
+    if (!get_sockaddr_host((struct sockaddr *)&server, addrlen, host))
+	return;
+    if (!get_sockaddr_service((struct sockaddr *)&server, addrlen, service))
+	return;
+    dbg_printf("Received %d bytes from AC (%s).\n", len, host);
+
+    if (sockaddr_host_equal(tun->tun_addr, tun->tun_addrlen, 
+		(struct sockaddr *)&server, addrlen)) {
         tun->tun_alive = 1;
-        if (tun->tun_addr.sin_port != server.sin_port) {
-            dbg_printf("The port of AC (%s) is invalid (%d).\n",
-                    inet_ntoa(server.sin_addr), 
-                    ntohs(server.sin_port));
+	if (!sockaddr_service_equal(tun->tun_addr, tun->tun_addrlen, 
+		    (struct sockaddr *)&server, addrlen)) {
+	    dbg_printf("The port of AC (%s) is invalid (%s).\n", host, service);
         }
         /* Skip CAPWAP header */
         if (write(tun->tun_fd, buffer+capwap_hdrlen, len-capwap_hdrlen) < 
@@ -75,8 +81,7 @@ static void capwap_rx_cb(int fd, short type, void *arg)
         return;
     }
 
-    dbg_printf("Unknwon AC (%s), ignored it.\n", 
-	    inet_ntoa(server.sin_addr));
+    dbg_printf("Unknwon AC (%s), ignored it.\n", host);
     return;
 }
 
@@ -85,17 +90,14 @@ int main(int argc, char *argv[])
     int opt;
     struct client_info client;
     struct tun_info *tun = &client.cli_tun;
+    char *host = NULL;
 
     memset(&client, 0, sizeof(client));
 
     while ((opt = getopt(argc, argv, "dc:t:b:")) != -1) {
         switch (opt) {
             case 'c':
-                tun->tun_addr.sin_addr.s_addr = inet_addr(optarg);
-                if (tun->tun_addr.sin_addr.s_addr == INADDR_NONE) {
-                    dbg_printf("Invalid IP address %s.\n", optarg);
-                    return -1;
-                }
+		host = strdup(optarg);
                 break;
             case 't':
                 strncpy(tun->tun_if, optarg, IFNAMSIZ);
@@ -115,9 +117,9 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (!tun->tun_addr.sin_addr.s_addr || 
-            !strlen(tun->tun_if) ||
-            !strlen(tun->tun_br)) {
+    if (get_sockaddr(tun, host, str(CW_DATA_PORT), &client.cli_fd) < 0 ||
+	    !strlen(tun->tun_if) ||
+	    !strlen(tun->tun_br)) {
         usage();
         return 1;
     }
@@ -135,9 +137,6 @@ int main(int argc, char *argv[])
     tun->tun_alive = 1;
 
     /* CAPWAP Data Channel */
-    client.cli_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    tun->tun_addr.sin_family = AF_INET;
-    tun->tun_addr.sin_port = htons(CW_DATA_PORT);
     event_set(&client.cli_ev, client.cli_fd, EV_READ|EV_PERSIST,
             capwap_rx_cb, &client);
     event_add(&client.cli_ev, NULL);
