@@ -4,7 +4,7 @@ int enable_debug = 0;
 
 struct server_info {
     int srv_fd;
-    struct sockaddr_in srv_addr;
+    //struct sockaddr_in srv_addr;
     struct event srv_ev;
     struct {
 	int tun_cnt;
@@ -222,6 +222,8 @@ int main(int argc, char *argv[])
     const char *config;
     struct server_info server_info, *srv_info;
     struct tun_info *tun_infos;
+    struct addrinfo hints, *result, *rp;
+    int ret;
 
     srv_info = &server_info;
     memset(srv_info, 0, sizeof(struct server_info));
@@ -259,19 +261,37 @@ int main(int argc, char *argv[])
     }
 
     /* CAPWAP Data Channel */
-    srv_info->srv_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (srv_info->srv_fd < 0) {
-	dbg_printf("Can't create UDP socket.\n");
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_protocol = 0;
+    hints.ai_canonname = NULL;
+    hints.ai_addr = NULL;
+    hints.ai_next = NULL;
+
+    ret = getaddrinfo(NULL, str(CW_DATA_PORT), &hints, &result);
+    if (ret) {
+	fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(ret));
 	return 1;
     }
-    srv_info->srv_addr.sin_family = AF_INET;
-    srv_info->srv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    srv_info->srv_addr.sin_port = htons(CW_DATA_PORT);
-    if (bind(srv_info->srv_fd, (struct sockaddr *)&srv_info->srv_addr,
-		sizeof(struct sockaddr_in)) < 0) {
+
+    for (rp = result; rp; rp = rp->ai_next) {
+	srv_info->srv_fd = socket(rp->ai_family, rp->ai_socktype, 
+		rp->ai_protocol);
+	if (srv_info->srv_fd < 0)
+	    continue;
+	if (bind(srv_info->srv_fd, rp->ai_addr, rp->ai_addrlen) == 0)
+	    break; /* Success */
+	close(srv_info->srv_fd);
+    }
+    freeaddrinfo(result);
+
+    if (rp == NULL) {
 	dbg_printf("Can't bind port %d.\n", CW_DATA_PORT);
 	return -1;
     }
+
     event_set(&srv_info->srv_ev, srv_info->srv_fd, EV_READ|EV_PERSIST,
 	    capwap_rx_cb, srv_info);
     event_add(&srv_info->srv_ev, NULL);

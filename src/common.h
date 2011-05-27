@@ -24,6 +24,9 @@
 #include <config.h>
 #endif
 
+#define _(x)	#x
+#define str(x)	_(x)
+
 #define CW_DATA_PORT    5247
 #define TUN_CTL_DEV     "/dev/net/tun"
 #define L2_MAX_SIZE	1536
