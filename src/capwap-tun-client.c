@@ -33,8 +33,8 @@ static void tap_rx_cb(int fd, short type, void *arg)
 
     if (tun->tun_alive) {
 	if (sendto(cli->cli_fd, buffer, len+capwap_hdrlen, 0, 
-		    (struct sockaddr *)&tun->tun_addr,
-		    sizeof(struct sockaddr_in)) < 0) {
+		    (struct sockaddr *)tun->tun_addr,
+		    tun->tun_addrlen) < 0) {
 	    dbg_printf("Can't send packet to AC.\n");
 	    return;
 	}
