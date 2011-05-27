@@ -77,5 +77,9 @@ extern void remove_from_bridge(char *ifname, char *br);
 extern int add_to_event_loop(struct tun_info *info, 
 	void (*cb)(int, short, void*));
 extern void remove_from_event_loop(struct tun_info *info);
+extern char *get_sockaddr_host(struct sockaddr *addr, size_t addrlen, 
+		char *buf);
+extern int sockaddr_host_equal(struct sockaddr *src_addr, size_t src_addrlen,
+	struct sockaddr *dst_addr, size_t dst_addrlen);
 
 #endif /* end of include guard: _COMMON_H_ */

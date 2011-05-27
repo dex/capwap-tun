@@ -98,3 +98,31 @@ void remove_from_event_loop(struct tun_info *info)
         event_del(&info->tun_ev);
 }
 
+char *get_sockaddr_host(struct sockaddr *addr, size_t addrlen, char *buf)
+{
+    int ret;
+    
+    ret = getnameinfo(addr, addrlen, buf, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+    if (ret) {
+	fprintf(stderr, "Can't get host from sockaddr.\n");
+	return NULL;
+    }
+    return buf;
+}
+
+int sockaddr_host_equal(struct sockaddr *src_addr, size_t src_addrlen,
+	struct sockaddr *dst_addr, size_t dst_addrlen)
+{
+    char src_host[NI_MAXHOST], dst_host[NI_MAXHOST];
+    int ret;
+
+    if (src_addrlen != dst_addrlen)
+	return 0;
+
+    if (get_sockaddr_host(src_addr, src_addrlen, src_host) &&
+	    get_sockaddr_host(dst_addr, dst_addrlen, dst_host) &&
+	    strcmp(src_host, dst_host) == 0)
+	return 1;
+    return 0;
+}
+
