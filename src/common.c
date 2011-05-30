@@ -182,6 +182,7 @@ int get_sockaddr(struct tun_info *tun, char *host, char *service, int *fdp)
 		continue;
 	    if (connect(*fdp, rp->ai_addr, rp->ai_addrlen) != -1)
 		break; /* success */
+	    perror("connect");
 	    close(*fdp);
 	}
 	if (rp == NULL) {
