@@ -2,10 +2,17 @@
 
 int enable_debug = 0;
 
-struct server_info {
+struct server_info;
+
+struct bind_info {
     int srv_fd;
-    //struct sockaddr_in srv_addr;
     struct event srv_ev;
+    struct server_info *srv_info;
+    struct bind_info *next;
+};
+
+struct server_info {
+    struct bind_info *srv_bind;
     struct {
 	int tun_cnt;
 	struct tun_info *tun_infos;
@@ -14,7 +21,7 @@ struct server_info {
 
 static void usage(void)
 {
-    fprintf(stderr, "capwap-tun-server [-d] -c <config>\n"
+    fprintf(stderr, "capwap-tun-server [-d] [-4|-6] -c <config>\n"
 		    "\tconfig format:\n"
 		    "\t<wtp_ip> <wtp_udp_port> <ifname> <br>\n"
 		    "\twtp_ip: The IP address of WTP.\n"
@@ -96,7 +103,7 @@ fail:
 static void tap_rx_cb(int fd, short type, void *arg)
 {
     struct tun_info *tun = arg;
-    struct server_info *srv = tun->tun_priv;
+    struct bind_info *binfo = tun->tun_priv;
     ssize_t len;
     char buffer[L2_MAX_SIZE];
 
@@ -111,7 +118,7 @@ static void tap_rx_cb(int fd, short type, void *arg)
     memcpy(buffer, capwap_hdr, capwap_hdrlen);
 
     if (tun->tun_alive) {
-	if (sendto(srv->srv_fd, buffer, len+capwap_hdrlen, 0, 
+	if (sendto(binfo->srv_fd, buffer, len+capwap_hdrlen, 0, 
 		    (struct sockaddr *)tun->tun_addr,
 		    tun->tun_addrlen) < 0) {
 	    dbg_printf("Can't send packet to WTP.\n");
@@ -125,7 +132,8 @@ static void tap_rx_cb(int fd, short type, void *arg)
 
 static void capwap_rx_cb(int fd, short type, void *arg)
 {
-    struct server_info *srv = arg;
+    struct bind_info *binfo = arg;
+    struct server_info *srv = binfo->srv_info;
     int len, i, tun_cnt = srv->srv_tun.tun_cnt;
     struct tun_info *infos = srv->srv_tun.tun_infos, *tun;
     char buffer[L2_MAX_SIZE];
@@ -148,6 +156,8 @@ static void capwap_rx_cb(int fd, short type, void *arg)
 	if (sockaddr_host_equal(tun->tun_addr, tun->tun_addrlen, 
 		    (struct sockaddr *)&client, addrlen)) {
 	    tun->tun_alive = 1;
+	    if (!tun->tun_priv)
+		tun->tun_priv = binfo;
 	    if (memcmp(tun->tun_addr, &client, tun->tun_addrlen))
 		memcpy(tun->tun_addr, &client, tun->tun_addrlen);
 	    /* Skip CAPWAP header */
@@ -172,7 +182,7 @@ static int add_tap_interface(struct tun_info *infos, int tun_cnt, void *priv)
                 (add_tap_to_bridge(info->tun_if, info->tun_br) < 0) || 
                 (add_to_event_loop(info, tap_rx_cb) < 0))
             goto fail;
-	info->tun_priv = priv;
+	info->tun_priv = NULL;
     }
     return 0;
 
@@ -195,12 +205,19 @@ int main(int argc, char *argv[])
     struct tun_info *tun_infos;
     struct addrinfo hints, *result, *rp;
     int ret;
+    int family = AF_UNSPEC;
 
     srv_info = &server_info;
     memset(srv_info, 0, sizeof(struct server_info));
 
-    while ((opt = getopt(argc, argv, "hdc:")) != -1) {
+    while ((opt = getopt(argc, argv, "46hdc:")) != -1) {
         switch (opt) {
+	    case '4':
+		family = AF_INET;
+		break;
+	    case '6':
+		family = AF_INET6;
+		break;
             case 'c':
                 config = optarg;
                 break;
@@ -233,7 +250,7 @@ int main(int argc, char *argv[])
 
     /* CAPWAP Data Channel */
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = family;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags = AI_PASSIVE;
     hints.ai_protocol = 0;
@@ -248,24 +265,38 @@ int main(int argc, char *argv[])
     }
 
     for (rp = result; rp; rp = rp->ai_next) {
-	srv_info->srv_fd = socket(rp->ai_family, rp->ai_socktype, 
-		rp->ai_protocol);
-	if (srv_info->srv_fd < 0)
+	int sockfd;
+	struct bind_info *prev = NULL, *binfo = NULL;
+	char host[NI_MAXHOST];
+
+	sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+	if (sockfd < 0)
 	    continue;
-	if (bind(srv_info->srv_fd, rp->ai_addr, rp->ai_addrlen) == 0)
-	    break; /* Success */
-	close(srv_info->srv_fd);
+	if (bind(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
+	    binfo = (struct bind_info *)calloc(1, sizeof(struct bind_info));
+	    binfo->srv_info = srv_info;
+	    binfo->srv_fd = sockfd;
+	    event_set(&binfo->srv_ev, binfo->srv_fd, EV_READ|EV_PERSIST,
+		    capwap_rx_cb, binfo);
+	    event_add(&binfo->srv_ev, NULL);
+	    if (prev) {
+		prev->next = binfo;
+	    } else {
+		srv_info->srv_bind = binfo;
+		prev = binfo;
+	    }
+	    get_sockaddr_host(rp->ai_addr, rp->ai_addrlen, host);
+	    dbg_printf("Bind address %s successfully.\n", host);
+	    continue; /* Success */
+	}
+	close(sockfd);
     }
     freeaddrinfo(result);
 
-    if (rp == NULL) {
+    if (srv_info->srv_bind == NULL) {
 	dbg_printf("Can't bind port %d.\n", CW_DATA_PORT);
 	return -1;
     }
-
-    event_set(&srv_info->srv_ev, srv_info->srv_fd, EV_READ|EV_PERSIST,
-	    capwap_rx_cb, srv_info);
-    event_add(&srv_info->srv_ev, NULL);
 
     event_dispatch();
 
