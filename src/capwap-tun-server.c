@@ -21,7 +21,7 @@ struct server_info {
 
 static void usage(void)
 {
-    fprintf(stderr, "capwap-tun-server [-d] [-4|-6] -c <config>\n"
+    fprintf(stderr, "capwap-tun-server [-d] [-4] -c <config>\n"
 		    "\tconfig format:\n"
 		    "\t<wtp_ip> <wtp_udp_port> <ifname> <br>\n"
 		    "\twtp_ip: The IP address of WTP.\n"
@@ -32,14 +32,14 @@ static void usage(void)
 }
 
 static int get_tun_info_from_config(const char *config, 
-        struct tun_info **tun_infos)
+        struct tun_info **tun_infos, int family)
 {
     FILE *fp = NULL;
     char buf[BUFSIZ];
     int i = 0, count = 0;
     struct tun_info *infos;
     char *pos, *tok, delim[] = " \t\n";
-    char *host, *service;
+    char host[NI_MAXHOST], *service;
 
     *tun_infos = NULL;
 
@@ -60,14 +60,16 @@ static int get_tun_info_from_config(const char *config,
     /* Second pass */
     rewind(fp);
     while (fgets(buf, BUFSIZ-1, fp) != NULL) {
-	host = NULL;
+	memset(host, 0, NI_MAXHOST);
 	service = NULL;
         if (buf[0] == '#' || buf[0] == '\n')
             continue;
         /* wtp_ip */
         if ((tok = strtok_r(buf, delim, &pos)) == NULL)
             goto fail;
-	host = tok;
+	if (family == AF_INET6 && !strchr(tok, ':'))
+	    strcpy(host, "::ffff:");	/* V4Mapped IPv6 Address */
+	strcat(host, tok);
         /* wtp_udp_port */
         if ((tok = strtok_r(NULL, delim, &pos)) == NULL)
             goto fail;
@@ -155,6 +157,8 @@ static void capwap_rx_cb(int fd, short type, void *arg)
 	tun = &infos[i];
 	if (sockaddr_host_equal(tun->tun_addr, tun->tun_addrlen, 
 		    (struct sockaddr *)&client, addrlen)) {
+	    if (!tun->tun_alive)
+		dbg_printf("Received first packet from WTP (%s).\n", host);
 	    tun->tun_alive = 1;
 	    if (!tun->tun_priv)
 		tun->tun_priv = binfo;
@@ -205,18 +209,15 @@ int main(int argc, char *argv[])
     struct tun_info *tun_infos;
     struct addrinfo hints, *result, *rp;
     int ret;
-    int family = AF_UNSPEC;
+    int family = AF_INET6;
 
     srv_info = &server_info;
     memset(srv_info, 0, sizeof(struct server_info));
 
-    while ((opt = getopt(argc, argv, "46hdc:")) != -1) {
+    while ((opt = getopt(argc, argv, "4hdc:")) != -1) {
         switch (opt) {
 	    case '4':
 		family = AF_INET;
-		break;
-	    case '6':
-		family = AF_INET6;
 		break;
             case 'c':
                 config = optarg;
@@ -234,7 +235,7 @@ int main(int argc, char *argv[])
     event_init();
 
     /* Read config */
-    if ((tun_cnt = get_tun_info_from_config(config, &tun_infos)) <= 0) {
+    if ((tun_cnt = get_tun_info_from_config(config, &tun_infos, family)) <= 0) {
         dbg_printf("Can't parse config file: %s.\n", config);
         return 1;
     }
