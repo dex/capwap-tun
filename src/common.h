@@ -34,16 +34,16 @@
 extern int enable_debug;
 
 struct capwap_hdr {
-	u_int32_t pad1;
-	u_int32_t pad2;
+    u_int32_t pad1;
+    u_int32_t pad2;
 } __attribute__((packed)); /* optional variable list */;
 #define capwap_hdr_preamble(h)  ((ntohl((h)->pad1) >> 24) & 0xff)
 #define capwap_hdr_hlen(h)  ((ntohl((h)->pad1) >> 19) & 0x1f)
 #define capwap_hdr_wbid(h)  ((ntohl((h)->pad1) >> 9) & 0x1f)
 
 static const unsigned char capwap_hdr[] = { 
-	0x00, 0x10, 0x02, 0x00, 
-	0x00, 0x00, 0x00, 0x00
+    0x00, 0x10, 0x02, 0x00, 
+    0x00, 0x00, 0x00, 0x00
 };
 
 #ifdef ENABLE_CAPWAP_HDR
@@ -54,10 +54,10 @@ static const capwap_hdrlen = 0;
 
 #define dbg_printf(format, args...) 				\
     do { 							\
-	if (enable_debug) { 					\
-	    fprintf(stderr, "<DEBUG:%s:%d> " format, 		\
-		    __FILE__, __LINE__, ##args); 		\
-	} 							\
+        if (enable_debug) { 					\
+            fprintf(stderr, "<DEBUG:%s:%d> " format, 		\
+                    __FILE__, __LINE__, ##args); 		\
+        } 							\
     } while(0)
 
 struct tun_info {
@@ -78,15 +78,15 @@ extern void revmoe_tap_interface(int fd);
 extern int add_tap_to_bridge(char *ifname, char *br);
 extern void remove_from_bridge(char *ifname, char *br);
 extern int add_to_event_loop(struct tun_info *info, 
-	void (*cb)(int, short, void*));
+                             void (*cb)(int, short, void*));
 extern void remove_from_event_loop(struct tun_info *info);
 extern int get_sockaddr(struct tun_info *tun, char *host, char *service, 
-		int *fdp);
+                        int *fdp);
 extern char *get_sockaddr_host(struct sockaddr *addr, size_t addrlen, 
-		char *buf);
+                               char *buf);
 extern char *get_sockaddr_service(struct sockaddr *addr, size_t addrlen, 
-		char *buf);
+                                  char *buf);
 extern int sockaddr_host_equal(struct sockaddr *src_addr, size_t src_addrlen,
-	struct sockaddr *dst_addr, size_t dst_addrlen);
+                               struct sockaddr *dst_addr, size_t dst_addrlen);
 
 #endif /* end of include guard: _COMMON_H_ */
